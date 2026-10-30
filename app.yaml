@@ -1,0 +1,37 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: fast_job_queue
+  labels:
+    app: fast_job_queue
+spec:
+  type: ClusterIP
+  selector:
+    app: fast_job_queue
+  ports:
+    - name: tcp
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: fast_job_queue
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fast_job_queue
+  template:
+    metadata:
+      labels:
+        app: fast_job_queue
+        version: v1
+    spec:
+      containers:
+      - name: fast_job_queue
+        image: fast_job_queue
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
