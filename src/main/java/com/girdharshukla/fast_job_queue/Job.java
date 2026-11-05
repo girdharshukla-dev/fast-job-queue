@@ -14,7 +14,7 @@ public record Job(
         String type,
         byte[] payload,
         Status status,
-        int attempts,
+        int attemptsCompleted,
         int maxAttempts,
         long runAt,
         long timeoutMs,
@@ -46,14 +46,6 @@ public record Job(
                 null);
     }
 
-    public Job updateStatus(Status next, long nowMs) {
-        if (!this.status.canMoveTo(next)) {
-            throw new IllegalStateException("Status invalid");
-        }
-
-        return new Job(id, type, payload, next, attempts, maxAttempts, runAt, timeoutMs, createdAt, nowMs, lastError);
-    }
-
     public byte[] encode() {
         try (ByteArrayOutputStream bos = new ByteArrayOutputStream();
                 DataOutputStream out = new DataOutputStream(bos)) {
@@ -62,7 +54,7 @@ public record Job(
             out.writeInt(payload.length);
             out.write(payload);
             out.writeByte(status.ordinal());
-            out.writeInt(attempts);
+            out.writeInt(attemptsCompleted);
             out.writeInt(maxAttempts);
             out.writeLong(runAt);
             out.writeLong(timeoutMs);
@@ -84,17 +76,25 @@ public record Job(
             byte[] payload = new byte[in.readInt()];
             in.readFully(payload);
             Status status = Status.values()[in.readByte()];
-            int attempts = in.readInt();
+            int attemptsCompleted = in.readInt();
             int maxAttempts = in.readInt();
             long runAt = in.readLong();
             long timeoutMs = in.readLong();
             long createdAt = in.readLong();
             long updatedAt = in.readLong();
             String lastError = in.readBoolean() ? in.readUTF() : null;
-            return new Job(id, type, payload, status, attempts, maxAttempts,
+            return new Job(id, type, payload, status, attemptsCompleted, maxAttempts,
                     runAt, timeoutMs, createdAt, updatedAt, lastError);
         } catch (IOException e) {
             throw new IllegalArgumentException("Corrupted job record", e);
         }
+    }
+
+    public Job update(Status next, int attemptsCompleted, long runAt, String lastError, long nowMs) {
+        if (!status.canMoveTo(next)) {
+            throw new IllegalStateException(status + " -> " + next + " for job " + id);
+        }
+        return new Job(id, type, payload, next, attemptsCompleted, maxAttempts,
+                runAt, timeoutMs, createdAt, nowMs, lastError);
     }
 }
