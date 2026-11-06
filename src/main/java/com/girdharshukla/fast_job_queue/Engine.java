@@ -5,10 +5,13 @@ import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 public class Engine {
 
@@ -25,12 +28,14 @@ public class Engine {
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
     private final int workerCount;
     private final ScheduledExecutorService refiller = Executors.newSingleThreadScheduledExecutor();
+    private final ExecutorService handleExec;
 
     public Engine(JobStore jobStore, int workerCount, int queueSize) {
         this.jobStore = jobStore;
         this.workerCount = workerCount;
         this.workers = Executors.newFixedThreadPool(workerCount);
         this.queue = new ArrayBlockingQueue<>(queueSize);
+        this.handleExec = Executors.newVirtualThreadPerTaskExecutor();
     }
 
     public void register(String type, Handler handler) {
@@ -90,7 +95,7 @@ public class Engine {
             long now = System.currentTimeMillis();
             for (Job job : jobStore.listByStatus(Job.Status.PENDING)) {
                 if (job.runAt() <= now) {
-                    if(inFlight.add(job.id())){
+                    if (inFlight.add(job.id())) {
                         if (!queue.offer(job))
                             inFlight.remove(job.id());
                     }
@@ -101,7 +106,7 @@ public class Engine {
         }
     }
 
-    private void process(Job job) {
+    private void process(Job job) throws InterruptedException {
         try {
             Job started = job.update(Job.Status.RUNNING,
                     job.attemptsCompleted() + 1,
@@ -112,15 +117,19 @@ public class Engine {
 
             String error = null;
 
-            try {
-                Handler handler = handlers.get(started.type());
-
-                if (handler == null) {
-                    throw new IllegalStateException("No handler for job: " + started.id() + " " + started.type());
-                }
+            Handler handler = handlers.get(started.type());
+            Future<?> f = handleExec.submit(() -> {
                 handler.handle(started);
-            } catch (Exception e) {
-                error = e.toString();
+                return null;
+            });
+
+            try {
+                f.get(started.timeoutMs(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                f.cancel(true);
+                error = "Job: " + started.id() + " timeout out after " + started.timeoutMs() + " ms";
+            } catch (ExecutionException e) {
+                error = e.getCause().toString();
             }
 
             long now = System.currentTimeMillis();
@@ -157,6 +166,8 @@ public class Engine {
         if (!workers.awaitTermination(deadlineMs, TimeUnit.MILLISECONDS)) {
             workers.shutdownNow();
         }
+
+        handleExec.shutdownNow();
     }
 
 }
