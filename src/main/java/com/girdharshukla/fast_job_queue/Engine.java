@@ -70,9 +70,7 @@ public class Engine {
         long now = System.currentTimeMillis();
         Job job = Job.create(type, payload, maxAttempts, now, timeoutMs, now);
         jobStore.save(job);
-        inFlight.add(job.id());
-        if (!queue.offer(job))
-            inFlight.remove(job.id());
+        // the refill will put this in the queue
         return job.id();
     }
 
