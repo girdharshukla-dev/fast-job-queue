@@ -39,26 +39,44 @@ public class Engine {
 
     public void start() {
         long now = System.currentTimeMillis();
-        for(Job j: jobStore.listByStatus(Job.Status.RUNNING)) {
+        for (Job j : jobStore.listByStatus(Job.Status.RUNNING)) {
             jobStore.save(j.update(Job.Status.PENDING,
-                j.attemptsCompleted(),
-                j.runAt(),
-                j.lastError(),
-                now));
+                    j.attemptsCompleted(),
+                    j.runAt(),
+                    j.lastError(),
+                    now));
         }
 
-        for(int i = 0; i < this.workerCount; i++){
+        for (int i = 0; i < this.workerCount; i++) {
             workers.execute(this::workerLoop);
         }
 
         refiller.scheduleWithFixedDelay(this::refill, 0, 1, TimeUnit.SECONDS);
     }
 
+    public String submit(String type, byte[] payload, int maxAttempts, long timeoutMs) {
+        if (!running)
+            throw new IllegalStateException("Engine is shutting down");
+        if (!handlers.containsKey(type))
+            throw new IllegalArgumentException("Unknown job type: " + type);
+        if (maxAttempts < 1 || timeoutMs <= 0)
+            throw new IllegalArgumentException("Bad arguments, maxAttempts or timeoutMs");
+
+        long now = System.currentTimeMillis();
+        Job job = Job.create(type, payload, maxAttempts, now, timeoutMs, now);
+        jobStore.save(job);
+        inFlight.add(job.id());
+        if (!queue.offer(job))
+            inFlight.remove(job.id());
+        return job.id();
+    }
+
     private void workerLoop() {
         while (running) {
             try {
                 Job job = queue.poll(100, TimeUnit.MILLISECONDS);
-                process(job);
+                if (job != null)
+                    process(job);
             } catch (InterruptedException e) {
                 return;
             } catch (RuntimeException e) {
@@ -72,9 +90,10 @@ public class Engine {
             long now = System.currentTimeMillis();
             for (Job job : jobStore.listByStatus(Job.Status.PENDING)) {
                 if (job.runAt() <= now) {
-                    inFlight.add(job.id());
-                    if (!queue.offer(job))
-                        inFlight.remove(job.id());
+                    if(inFlight.add(job.id())){
+                        if (!queue.offer(job))
+                            inFlight.remove(job.id());
+                    }
                 }
             }
         } catch (RuntimeException e) {
@@ -121,7 +140,7 @@ public class Engine {
             } else {
                 jobStore.save(started.update(Job.Status.PENDING,
                         started.attemptsCompleted(),
-                        started.runAt(),
+                        started.runAt() + (1000L << Math.min(job.attemptsCompleted(), 6)),
                         error,
                         now));
             }
@@ -135,7 +154,7 @@ public class Engine {
         running = false;
         refiller.shutdownNow();
         workers.shutdown();
-        if(!workers.awaitTermination(deadlineMs, TimeUnit.MILLISECONDS)){
+        if (!workers.awaitTermination(deadlineMs, TimeUnit.MILLISECONDS)) {
             workers.shutdownNow();
         }
     }
