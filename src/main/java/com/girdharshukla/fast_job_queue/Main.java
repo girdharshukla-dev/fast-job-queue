@@ -58,6 +58,8 @@ public class Main {
         engine.register("sleep", new Handlers.Sleep());
         engine.register("fail", new Handlers.Fail());
 
+        engine.start();
+
         WebServer server = WebServer.builder()
                 .config(config.get("server"))
                 .routing(r -> r

@@ -49,7 +49,7 @@ class RocksJobStoreTest {
     void savingSameIdReplacesOldRecord() {
         Job job = newJob("a");
         store.save(job);
-        store.save(job.updateStatus(Job.Status.RUNNING, 2000L));
+        store.save(job.update(Job.Status.RUNNING, job.attemptsCompleted(), job.runAt(), job.lastError(),2000L));
 
         assertEquals(Job.Status.RUNNING, store.getJob("a").orElseThrow().status());
         assertEquals(0, store.listByStatus(Job.Status.PENDING).size());
@@ -58,7 +58,8 @@ class RocksJobStoreTest {
     @Test
     void listByStatusReturnsOnlyMatchingJobs() {
         store.save(newJob("p"));
-        store.save(newJob("r").updateStatus(Job.Status.RUNNING, 2000L));
+        Job pending = newJob("r");
+        store.save(pending.update(Job.Status.RUNNING, pending.attemptsCompleted(), pending.runAt(), pending.lastError(), 2000L));
 
         List<Job> result = store.listByStatus(Job.Status.PENDING);
         assertEquals(1, result.size());
